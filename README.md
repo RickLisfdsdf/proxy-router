@@ -1,5 +1,7 @@
 <div align="center">
 
+**简体中文** | [English](README.en.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Русский](README.ru.md)
+
 # 🎯 分流管家 · proxy-router
 
 **给 Clash Verge Rev 加一个「哪个软件走哪个节点」的可视化管理页面**
@@ -121,6 +123,7 @@ python app.py
 
 - [ ] 从「正在运行的程序」列表里直接挑选软件
 - [ ] 规则导入 / 导出，分享给朋友
+- [ ] 英文等多语言界面
 - [ ] 开机自启选项
 - [ ] macOS / Linux 支持
 - [ ] 支持 Clash Party、FlClash 等其他 mihomo 客户端
