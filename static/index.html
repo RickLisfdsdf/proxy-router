@@ -52,8 +52,9 @@ button:disabled{opacity:.5;cursor:default}
 .actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
 .switch{position:relative;width:36px;height:20px;flex:none}
 .switch input{opacity:0;width:0;height:0}
-.switch span{position:absolute;inset:0;background:var(--line);border-radius:20px;cursor:pointer;transition:.2s}
-.switch span:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.switch span{position:absolute;inset:0;background:var(--line);border-radius:20px;cursor:pointer}
+.ready .switch span,.ready .switch span:before{transition:.2s}
+.switch span:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%}
 .switch input:checked+span{background:var(--accent)}
 .switch input:checked+span:before{transform:translateX(16px)}
 .empty{text-align:center;padding:40px;color:var(--muted)}
@@ -195,6 +196,7 @@ h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
   </div>
 </div>
 
+<script src="demo.js"></script>
 <script>
 const MTYPES = [
   ['PROCESS-NAME','软件进程名'],['PROCESS-PATH-REGEX','软件路径（正则）'],['PROCESS-NAME-REGEX','进程名（正则）'],
@@ -235,6 +237,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 async function api(path, opt = {}) {
+  if (window.DEMO_API) return window.DEMO_API(path, {...opt, body: opt.body ? JSON.stringify(opt.body) : undefined});
   const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opt,
     body: opt.body ? JSON.stringify(opt.body) : undefined});
   const j = await r.json();
@@ -466,7 +469,12 @@ window.addEventListener('beforeunload', e => { if (JSON.stringify(state) !== sav
   const j = await api('/api/state');
   state = j.state; state.settings ??= {lan_direct:true}; report = j.report;
   saved = JSON.stringify(state);
-  renderRules(); loadStatus(); loadProxies();
+  renderRules(); loadStatus(); await loadProxies();
+  document.body.classList.add('ready');
+  // 支持 ?tab=conns / ?tab=nodes / ?edit=序号，方便直接打开某个页面
+  const q = new URLSearchParams(location.search);
+  if (q.get('tab')) document.querySelector(`nav button[data-tab="${q.get('tab')}"]`)?.click();
+  if (q.get('edit')) openEditor(+q.get('edit'));
 })();
 </script>
 </body>

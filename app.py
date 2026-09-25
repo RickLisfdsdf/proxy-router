@@ -33,7 +33,7 @@ BUILTIN = {"DIRECT", "REJECT"}
 GROUP_TYPES = {"Selector", "URLTest", "Fallback", "LoadBalance", "Relay"}
 SKIP_TYPES = {"Direct", "Reject", "RejectDrop", "Compatible", "Pass", "Dns"}
 
-app = Flask(__name__, static_folder="static")
+app = Flask(__name__, static_folder="static", static_url_path="")
 
 
 # ---------------------------------------------------------------- mihomo 管道 API
