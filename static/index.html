@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分流管家</title>
+<style>
+:root{
+  --bg:#f5f6f8;--card:#fff;--fg:#1d2330;--muted:#6b7385;--line:#e3e6ec;
+  --accent:#2f6fed;--accent-soft:#e8effe;--ok:#1f9d55;--ok-soft:#e5f6ec;
+  --warn:#c77700;--warn-soft:#fff3dc;--bad:#d64040;--bad-soft:#fdeaea;--chip:#eef0f4;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14161b;--card:#1d2027;--fg:#e6e8ee;--muted:#9097a6;--line:#2c3039;
+  --accent:#5b8fff;--accent-soft:#223052;--ok:#3cc47c;--ok-soft:#173526;
+  --warn:#f0a531;--warn-soft:#3a2c12;--bad:#f06a6a;--bad-soft:#3d1c1c;--chip:#292d36;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:5}
+h1{font-size:18px;margin:0;white-space:nowrap}
+.status{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{padding:2px 10px;border-radius:999px;background:var(--chip);font-size:12px;white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.bad{background:var(--bad-soft);color:var(--bad)}
+nav{display:flex;gap:4px;margin-left:auto}
+nav button{background:none;border:none;padding:8px 14px;border-radius:8px;color:var(--muted);font:inherit;cursor:pointer}
+nav button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+main{max-width:1000px;margin:0 auto;padding:20px 16px 110px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--fg);padding:7px 14px;border-radius:8px;font:inherit;cursor:pointer}
+button.btn:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad)}
+button.small{padding:3px 9px;font-size:12px}
+button:disabled{opacity:.5;cursor:default}
+.hint{color:var(--muted);font-size:12.5px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px}
+.rule{display:grid;grid-template-columns:28px 1fr auto;gap:12px;align-items:center}
+.rule.off{opacity:.5}
+.idx{color:var(--muted);font-variant-numeric:tabular-nums;text-align:center}
+.rname{font-weight:600;font-size:15px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.chip{background:var(--chip);border-radius:6px;padding:1px 8px;font-size:12px;font-family:Consolas,monospace}
+.chip b{font-family:inherit;font-weight:500;color:var(--muted);margin-right:4px}
+.target{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.arrow{color:var(--muted)}
+.tag{font-size:12px;padding:1px 8px;border-radius:6px;font-weight:600}
+.tag.lock{background:var(--accent-soft);color:var(--accent)}
+.tag.fb{background:var(--ok-soft);color:var(--ok)}
+.tag.direct{background:var(--chip);color:var(--muted)}
+.tag.reject{background:var(--bad-soft);color:var(--bad)}
+.actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.switch{position:relative;width:36px;height:20px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:var(--line);border-radius:20px;cursor:pointer;transition:.2s}
+.switch span:before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+span{background:var(--accent)}
+.switch input:checked+span:before{transform:translateX(16px)}
+.empty{text-align:center;padding:40px;color:var(--muted)}
+.savebar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:12px 24px;display:none;justify-content:center;gap:12px;align-items:center;z-index:6;box-shadow:0 -4px 16px rgba(0,0,0,.06)}
+.savebar.show{display:flex}
+.toast{position:fixed;top:70px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:10px;z-index:20;max-width:90vw;white-space:pre-wrap;display:none;box-shadow:0 4px 20px rgba(0,0,0,.15)}
+.toast.ok{background:var(--ok);color:#fff}.toast.bad{background:var(--bad);color:#fff}
+/* 弹窗 */
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:flex-start;justify-content:center;z-index:10;overflow:auto;padding:40px 16px}
+.mask.show{display:flex}
+.modal{background:var(--card);border-radius:14px;width:640px;max-width:100%;padding:22px 24px}
+.modal h2{margin:0 0 16px;font-size:17px}
+.field{margin-bottom:16px}
+.field>label{display:block;font-weight:600;margin-bottom:6px}
+input[type=text],select{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+.mrow{display:grid;grid-template-columns:190px 1fr 32px;gap:6px;margin-bottom:6px}
+.radios{display:flex;gap:6px;flex-wrap:wrap}
+.radios label{border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+.radios label.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.radios input{display:none}
+.modebox label{display:block;border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:6px;cursor:pointer}
+.modebox label.on{border-color:var(--accent);background:var(--accent-soft)}
+.modebox input{margin-right:6px}
+.backups{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 10px;columns:2}
+.backups label{display:block;font-size:13px}
+.check{display:flex;gap:8px;align-items:flex-start}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+/* 连接页 */
+.app-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.route{display:flex;gap:8px;font-size:13px;margin-top:4px;flex-wrap:wrap}
+.route .r{font-weight:600}
+.route .by{color:var(--muted);font-family:Consolas,monospace;font-size:12px}
+.path{color:var(--muted);font-size:12px;word-break:break-all}
+.hosts{color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+/* 节点页 */
+.nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.node{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+.node:hover{border-color:var(--accent)}
+.delay{font-variant-numeric:tabular-nums;font-size:12px;white-space:nowrap}
+.d-good{color:var(--ok)}.d-mid{color:var(--warn)}.d-bad{color:var(--bad)}.d-none{color:var(--muted)}
+h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
+@media (max-width:640px){
+  header{padding:12px 16px}nav{margin-left:0;width:100%}
+  .rule{grid-template-columns:1fr}.idx{display:none}.actions{justify-content:flex-start}
+  .mrow{grid-template-columns:1fr 32px}.mrow select{grid-column:1/-1}
+  .backups{columns:1}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎯 分流管家</h1>
+  <div class="status" id="status"><span class="pill">连接中…</span></div>
+  <nav>
+    <button data-tab="rules" class="on">分流规则</button>
+    <button data-tab="conns">正在联网的软件</button>
+    <button data-tab="nodes">节点</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-rules">
+    <div class="toolbar">
+      <button class="btn primary" onclick="openEditor()">＋ 新建规则</button>
+      <label class="check" style="margin-left:auto;align-items:center">
+        <span class="switch"><input type="checkbox" id="lanDirect" onchange="state.settings.lan_direct=this.checked;markDirty()"><span></span></span>
+        局域网始终直连
+      </label>
+    </div>
+    <p class="hint">规则<b>从上往下</b>匹配，先命中的生效。想让某个网站在任何软件里都走固定节点（比如 claude.ai），就把这条“服务”规则拖到软件规则<b>上面</b>。没命中的流量照常按订阅原有规则走。</p>
+    <div id="ruleList"></div>
+  </section>
+
+  <section id="tab-conns" hidden>
+    <div class="toolbar">
+      <span class="hint">每 3 秒刷新一次。这里显示每个软件<b>实际</b>走的节点，可以用来验证规则是否生效。</span>
+      <button class="btn small" style="margin-left:auto" onclick="loadConns()">立即刷新</button>
+    </div>
+    <div id="connList"></div>
+  </section>
+
+  <section id="tab-nodes" hidden>
+    <div class="toolbar">
+      <button class="btn" id="testAllBtn" onclick="testAll()">全部测速</button>
+      <span class="hint">点单个节点也可以测速</span>
+    </div>
+    <div id="nodeList"></div>
+  </section>
+</main>
+
+<div class="savebar" id="savebar">
+  <span>有修改还没生效</span>
+  <button class="btn" onclick="discard()">放弃修改</button>
+  <button class="btn primary" id="applyBtn" onclick="apply()">保存并立即生效</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="mask" id="mask">
+  <div class="modal">
+    <h2 id="edTitle">新建规则</h2>
+    <div class="field">
+      <label>快速模板</label>
+      <div class="presets" id="presets"></div>
+    </div>
+    <div class="field">
+      <label>名称</label>
+      <input type="text" id="edName" placeholder="比如：Chrome、Claude、Telegram">
+    </div>
+    <div class="field">
+      <label>匹配什么流量</label>
+      <div id="edMatchers"></div>
+      <button class="btn small" onclick="addMatcher()">＋ 再加一个条件</button>
+      <div class="hint" style="margin-top:4px">多个条件是“或”的关系，任意一个命中就算。</div>
+    </div>
+    <div class="field">
+      <label>走哪里</label>
+      <div class="radios" id="edKind"></div>
+    </div>
+    <div class="field" id="edNodeBox">
+      <select id="edTarget"></select>
+      <div class="modebox" id="edModeBox" style="margin-top:10px">
+        <label><input type="radio" name="mode" value="strict"><b>锁定</b>：只能走这个节点。节点挂了就断网，绝不会换成别的节点</label>
+        <label><input type="radio" name="mode" value="fallback"><b>优先</b>：先走这个节点，不通时自动切换到下面勾选的备用节点</label>
+      </div>
+      <div id="edBackupBox" style="margin-top:6px">
+        <div class="hint" style="margin-bottom:4px">备用节点（按订阅顺序依次尝试）</div>
+        <div class="backups" id="edBackups"></div>
+      </div>
+    </div>
+    <div class="field" id="edCnBox">
+      <label class="check"><input type="checkbox" id="edCn">
+        <span>国内网站直连<br><span class="hint">勾选后这个软件访问国内网站不走节点，只有访问国外网站才走上面选的节点。不勾选则该软件的全部流量都走这个节点。</span></span></label>
+    </div>
+    <div class="foot">
+      <button class="btn" onclick="closeEditor()">取消</button>
+      <button class="btn primary" onclick="saveEditor()">确定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const MTYPES = [
+  ['PROCESS-NAME','软件进程名'],['PROCESS-PATH-REGEX','软件路径（正则）'],['PROCESS-NAME-REGEX','进程名（正则）'],
+  ['DOMAIN-SUFFIX','域名（含子域名）'],['DOMAIN','完整域名'],['DOMAIN-KEYWORD','域名关键字'],
+  ['GEOSITE','网站分类（geosite）'],['IP-CIDR','IP 段'],['DST-PORT','目标端口'],
+];
+const MLABEL = Object.fromEntries(MTYPES);
+const P = v => ({type:'PROCESS-NAME', value:v});
+const D = v => ({type:'DOMAIN-SUFFIX', value:v});
+const PRESETS = [
+  {name:'Chrome', matchers:[P('chrome.exe')], cn:true},
+  {name:'Edge', matchers:[P('msedge.exe')], cn:true},
+  {name:'Firefox', matchers:[P('firefox.exe')], cn:true},
+  {name:'Claude', matchers:[P('claude.exe')], cn:false, tip:'桌面版和 Claude Code 都是 claude.exe'},
+  {name:'Claude 桌面版', matchers:[{type:'PROCESS-PATH-REGEX', value:'(?i)\\\\WindowsApps\\\\Claude_'}]},
+  {name:'Claude Code', matchers:[{type:'PROCESS-PATH-REGEX', value:'(?i)claude-code'}]},
+  {name:'Claude 网页和 API', matchers:[D('claude.ai'),D('claude.com'),D('anthropic.com'),D('claudeusercontent.com')]},
+  {name:'ChatGPT', matchers:[P('ChatGPT.exe'),D('openai.com'),D('chatgpt.com'),D('oaistatic.com'),D('oaiusercontent.com')]},
+  {name:'Gemini', matchers:[D('gemini.google.com'),D('aistudio.google.com'),D('generativelanguage.googleapis.com')]},
+  {name:'Telegram', matchers:[P('Telegram.exe'),{type:'GEOSITE',value:'telegram'}]},
+  {name:'VS Code', matchers:[P('Code.exe')], cn:true},
+  {name:'Cursor', matchers:[P('Cursor.exe')], cn:true},
+  {name:'Git', matchers:[P('git.exe'),P('git-remote-https.exe'),P('ssh.exe')], cn:true},
+  {name:'Node 和 npm', matchers:[P('node.exe')], cn:true},
+  {name:'Python 和 pip', matchers:[P('python.exe'),P('pip.exe'),P('uv.exe')], cn:true},
+  {name:'GitHub', matchers:[{type:'GEOSITE',value:'github'}]},
+  {name:'YouTube', matchers:[{type:'GEOSITE',value:'youtube'}]},
+  {name:'Netflix', matchers:[{type:'GEOSITE',value:'netflix'}]},
+  {name:'Steam', matchers:[P('steam.exe'),P('steamwebhelper.exe')], cn:true},
+  {name:'Discord', matchers:[P('Discord.exe'),{type:'GEOSITE',value:'discord'}]},
+];
+
+let state = {settings:{lan_direct:true}, rules:[]}, saved = '', report = {};
+let proxies = {nodes:[], groups:[]};
+let editing = null, connTimer = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opt,
+    body: opt.body ? JSON.stringify(opt.body) : undefined});
+  const j = await r.json();
+  if (!r.ok || j.ok === false) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(msg, ok = true) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast ' + (ok ? 'ok' : 'bad'); t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ok ? 2500 : 8000);
+}
+function delayCls(d) { return d == null ? 'd-none' : d === 0 ? 'd-bad' : d < 300 ? 'd-good' : d < 800 ? 'd-mid' : 'd-bad'; }
+function delayTxt(d) { return d == null ? '—' : d === 0 ? '超时' : d + ' ms'; }
+function nodeDelay(name) { const n = proxies.nodes.find(n => n.name === name); return n ? n.delay : undefined; }
+
+/* ---------- 状态栏 ---------- */
+async function loadStatus() {
+  let s;
+  try { s = await api('/api/status'); } catch (e) { s = {ok:false, error:e.message}; }
+  const el = $('status');
+  if (!s.ok) { el.innerHTML = `<span class="pill bad">连不上 Clash Verge：${esc(s.error)}</span>`; return; }
+  const modeName = {rule:'规则', global:'全局', direct:'直连'}[s.mode] || s.mode;
+  el.innerHTML = `<span class="pill ok">mihomo ${esc(s.version)}</span>
+    <span class="pill">订阅：${esc(s.profile || '?')}</span>
+    ${s.mode === 'rule' ? `<span class="pill ok">规则模式</span>`
+      : `<span class="pill bad">当前是${modeName}模式，分流规则不生效 <button class="btn small" onclick="setMode()">切到规则模式</button></span>`}
+    ${s.tun ? `<span class="pill ok">TUN 已开</span>` : `<span class="pill warn" title="不开 TUN 时，不读系统代理的程序（如 Claude Code、git）不会被接管">TUN 未开</span>`}`;
+}
+async function setMode() { await api('/api/mode', {method:'POST', body:{mode:'rule'}}); loadStatus(); toast('已切到规则模式'); }
+
+/* ---------- 规则列表 ---------- */
+function markDirty() { $('savebar').classList.toggle('show', JSON.stringify(state) !== saved); renderRules(); }
+function renderRules() {
+  $('lanDirect').checked = state.settings.lan_direct !== false;
+  const list = $('ruleList');
+  if (!state.rules.length) { list.innerHTML = `<div class="card empty">还没有规则。点“新建规则”，或在“正在联网的软件”里直接给某个软件指定节点。</div>`; return; }
+  const dirty = JSON.stringify(state) !== saved;
+  list.innerHTML = state.rules.map((r, i) => {
+    const t = r.target, rep = report[r.id];
+    let tag, dest;
+    if (t.kind === 'direct') { tag = '<span class="tag direct">直连</span>'; dest = '不走代理'; }
+    else if (t.kind === 'reject') { tag = '<span class="tag reject">禁止联网</span>'; dest = ''; }
+    else if (t.kind === 'group') { tag = '<span class="tag direct">订阅分组</span>'; dest = esc(t.name); }
+    else if (r.mode === 'fallback') { tag = '<span class="tag fb">优先</span>'; dest = esc(t.name) + (r.backups?.length ? ` <span class="hint">＋${r.backups.length} 个备用</span>` : ''); }
+    else { tag = '<span class="tag lock">锁定</span>'; dest = esc(t.name); }
+    const d = t.kind === 'node' ? nodeDelay(t.name) : undefined;
+    let st = '';
+    if (r.enabled === false) st = '<span class="pill">已停用</span>';
+    else if (dirty && !rep) st = '<span class="pill warn">未生效</span>';
+    else if (rep && !rep.active) st = `<span class="pill bad">当前订阅里找不到：${esc(rep.missing.join('、'))}</span>`;
+    else if (rep && rep.missing.length) st = `<span class="pill warn">部分备用节点不存在</span>`;
+    else if (rep) st = '<span class="pill ok">生效中</span>';
+    return `<div class="card rule ${r.enabled === false ? 'off' : ''}">
+      <div class="idx">${i + 1}</div>
+      <div>
+        <div class="rname">${esc(r.name)} ${st}</div>
+        <div class="chips">${r.matchers.map(m => `<span class="chip"><b>${esc(MLABEL[m.type] || m.type)}</b>${esc(m.value)}</span>`).join('')}
+          ${r.cn_direct ? '<span class="chip"><b>国内网站</b>直连</span>' : ''}</div>
+        <div class="target"><span class="arrow">→</span>${tag}<span>${dest}</span>${d !== undefined ? `<span class="delay ${delayCls(d)}">${delayTxt(d)}</span>` : ''}</div>
+      </div>
+      <div class="actions">
+        <label class="switch" title="启用/停用"><input type="checkbox" ${r.enabled !== false ? 'checked' : ''} onchange="state.rules[${i}].enabled=this.checked;markDirty()"><span></span></label>
+        <button class="btn small" ${i === 0 ? 'disabled' : ''} onclick="move(${i},-1)">↑</button>
+        <button class="btn small" ${i === state.rules.length - 1 ? 'disabled' : ''} onclick="move(${i},1)">↓</button>
+        <button class="btn small" onclick="openEditor(${i})">编辑</button>
+        <button class="btn small danger" onclick="delRule(${i})">删除</button>
+      </div></div>`;
+  }).join('');
+}
+function move(i, d) { const r = state.rules.splice(i, 1)[0]; state.rules.splice(i + d, 0, r); markDirty(); }
+function delRule(i) { state.rules.splice(i, 1); markDirty(); }
+function discard() { state = JSON.parse(saved); markDirty(); }
+async function apply() {
+  const b = $('applyBtn'); b.disabled = true; b.textContent = '校验并应用中…';
+  try {
+    const j = await api('/api/apply', {method:'POST', body:state});
+    report = j.report; saved = JSON.stringify(state); markDirty();
+    const bad = Object.values(report).filter(r => !r.active).length;
+    toast(bad ? `已生效，但有 ${bad} 条规则的节点在当前订阅里不存在` : '已保存，规则立即生效', !bad);
+    loadStatus();
+  } catch (e) { toast(e.message, false); }
+  b.disabled = false; b.textContent = '保存并立即生效';
+}
+
+/* ---------- 编辑器 ---------- */
+const KINDS = [['node','指定节点'],['group','订阅里的分组'],['direct','直连'],['reject','禁止联网']];
+function openEditor(i, preset) {
+  editing = i;
+  const r = i != null ? JSON.parse(JSON.stringify(state.rules[i]))
+    : {id:uid(), name:'', enabled:true, matchers:[{type:'PROCESS-NAME', value:''}], target:{kind:'node', name:''}, mode:'strict', backups:[], cn_direct:true, ...(preset || {})};
+  $('edTitle').textContent = i != null ? '编辑规则' : '新建规则';
+  $('presets').parentElement.style.display = i != null ? 'none' : '';
+  $('presets').innerHTML = PRESETS.map((p, k) => `<button class="btn small" title="${esc(p.tip || '')}" onclick="usePreset(${k})">${esc(p.name)}</button>`).join('');
+  $('edName').value = r.name;
+  $('mask').dataset.id = r.id;
+  renderMatchers(r.matchers);
+  fillTargets(r);
+  $('edCn').checked = !!r.cn_direct;
+  $('mask').classList.add('show');
+}
+function usePreset(k) {
+  const p = PRESETS[k];
+  $('edName').value = p.name;
+  renderMatchers(JSON.parse(JSON.stringify(p.matchers)));
+  $('edCn').checked = !!p.cn;
+  updateEditorVis();
+}
+function renderMatchers(ms) {
+  $('edMatchers').innerHTML = ms.map(m => `<div class="mrow">
+    <select onchange="updateEditorVis()">${MTYPES.map(([v, l]) => `<option value="${v}" ${v === m.type ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <input type="text" value="${esc(m.value)}" placeholder="例如 chrome.exe 或 claude.ai">
+    <button class="btn small danger" onclick="this.parentElement.remove();updateEditorVis()">✕</button></div>`).join('');
+  updateEditorVis();
+}
+function addMatcher() {
+  $('edMatchers').insertAdjacentHTML('beforeend', `<div class="mrow">
+    <select onchange="updateEditorVis()">${MTYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+    <input type="text" placeholder="例如 chrome.exe 或 claude.ai">
+    <button class="btn small danger" onclick="this.parentElement.remove();updateEditorVis()">✕</button></div>`);
+}
+function readMatchers() {
+  return [...$('edMatchers').querySelectorAll('.mrow')].map(row => ({type:row.querySelector('select').value, value:row.querySelector('input').value.trim()})).filter(m => m.value);
+}
+function fillTargets(r) {
+  $('edKind').innerHTML = KINDS.map(([v, l]) => `<label class="${r.target.kind === v ? 'on' : ''}"><input type="radio" name="kind" value="${v}" ${r.target.kind === v ? 'checked' : ''}>${l}</label>`).join('');
+  $('edKind').onchange = () => { fillTargetSelect(null); updateEditorVis(); };
+  fillTargetSelect(r.target.name);
+  document.querySelectorAll('input[name=mode]').forEach(x => x.checked = x.value === (r.mode || 'strict'));
+  $('edBackups').innerHTML = proxies.nodes.map(n => `<label><input type="checkbox" value="${esc(n.name)}" ${(r.backups || []).includes(n.name) ? 'checked' : ''}> ${esc(n.name)} <span class="delay ${delayCls(n.delay)}">${delayTxt(n.delay)}</span></label>`).join('');
+  $('edModeBox').onchange = updateEditorVis;
+  updateEditorVis();
+}
+function fillTargetSelect(cur) {
+  const kind = document.querySelector('input[name=kind]:checked').value;
+  const sel = $('edTarget');
+  if (kind === 'node') {
+    const known = proxies.nodes.some(n => n.name === cur);
+    sel.innerHTML = `<option value="">— 选择节点 —</option>` + (cur && !known ? `<option value="${esc(cur)}" selected>${esc(cur)}（当前订阅里没有）</option>` : '') +
+      proxies.nodes.map(n => `<option value="${esc(n.name)}" ${n.name === cur ? 'selected' : ''}>${esc(n.name)}　${delayTxt(n.delay)}</option>`).join('');
+  } else if (kind === 'group') {
+    sel.innerHTML = `<option value="">— 选择订阅里的分组 —</option>` +
+      proxies.groups.map(g => `<option value="${esc(g.name)}" ${g.name === cur ? 'selected' : ''}>${esc(g.name)}（当前：${esc(g.now || '自动')}）</option>`).join('');
+  }
+}
+function updateEditorVis() {
+  const kind = document.querySelector('input[name=kind]:checked')?.value;
+  document.querySelectorAll('#edKind label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
+  document.querySelectorAll('#edModeBox label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
+  $('edNodeBox').style.display = kind === 'node' || kind === 'group' ? '' : 'none';
+  $('edModeBox').style.display = kind === 'node' ? '' : 'none';
+  const mode = document.querySelector('input[name=mode]:checked')?.value;
+  $('edBackupBox').style.display = kind === 'node' && mode === 'fallback' ? '' : 'none';
+  const hasProc = [...$('edMatchers').querySelectorAll('select')].some(s => s.value.startsWith('PROCESS'));
+  $('edCnBox').style.display = hasProc && kind !== 'direct' ? '' : 'none';
+}
+function closeEditor() { $('mask').classList.remove('show'); }
+function saveEditor() {
+  const kind = document.querySelector('input[name=kind]:checked').value;
+  const name = $('edName').value.trim();
+  const matchers = readMatchers();
+  const target = {kind, name: kind === 'node' || kind === 'group' ? $('edTarget').value : ''};
+  if (!name) return toast('请填写名称', false);
+  if (/[,()]/.test(name)) return toast('名称不能包含逗号或括号', false);
+  if (state.rules.some((r, i) => r.name === name && i !== editing)) return toast('名称和已有规则重复了', false);
+  if (!matchers.length) return toast('至少填一个匹配条件', false);
+  if (matchers.some(m => m.value.includes(','))) return toast('匹配值不能包含逗号', false);
+  if ((kind === 'node' || kind === 'group') && !target.name) return toast('请选择节点', false);
+  const mode = kind === 'node' ? document.querySelector('input[name=mode]:checked').value : 'strict';
+  const r = {
+    id: $('mask').dataset.id, name, matchers, target, mode,
+    enabled: editing != null ? state.rules[editing].enabled : true,
+    backups: mode === 'fallback' ? [...$('edBackups').querySelectorAll('input:checked')].map(x => x.value).filter(n => n !== target.name) : [],
+    cn_direct: $('edCnBox').style.display !== 'none' && $('edCn').checked,
+  };
+  if (editing != null) state.rules[editing] = r; else state.rules.push(r);
+  closeEditor(); markDirty();
+}
+
+/* ---------- 正在联网的软件 ---------- */
+const fmtB = b => b > 1 << 30 ? (b / (1 << 30)).toFixed(2) + ' GB' : b > 1 << 20 ? (b / (1 << 20)).toFixed(1) + ' MB' : (b / 1024).toFixed(0) + ' KB';
+async function loadConns() {
+  let j;
+  try { j = await api('/api/connections'); } catch (e) { $('connList').innerHTML = `<div class="card empty">${esc(e.message)}</div>`; return; }
+  $('connList').innerHTML = j.apps.length ? j.apps.map(a => `<div class="card">
+    <div class="app-head"><div><span class="rname">${esc(a.process)}</span>
+      <span class="hint">　${a.count} 个连接 · ↑${fmtB(a.up)} ↓${fmtB(a.down)}</span></div>
+      ${a.process.includes('.') ? `<button class="btn small primary" onclick='quickRule(${JSON.stringify(a.process)})'>给它指定节点</button>` : ''}</div>
+    ${a.paths.map(p => `<div class="path">${esc(p)}</div>`).join('')}
+    ${a.routes.map(r => `<div class="route"><span class="r">${esc(r.route)}</span><span class="by">命中：${esc(r.rule)}</span><span class="hint">×${r.count}</span></div>`).join('')}
+    <div class="hosts">${a.hosts.map(esc).join(' · ')}</div></div>`).join('')
+    : '<div class="card empty">现在没有连接</div>';
+}
+function quickRule(proc) {
+  const base = proc.replace(/\.exe$/i, '');
+  openEditor(null, {name: base, matchers:[{type:'PROCESS-NAME', value:proc}], cn_direct:true});
+}
+
+/* ---------- 节点 ---------- */
+async function loadProxies() {
+  try { proxies = await api('/api/proxies'); } catch (e) { return; }
+  renderNodes(); renderRules();
+}
+function renderNodes() {
+  $('nodeList').innerHTML = `<div class="nodes">${proxies.nodes.map(n => `<div class="node" onclick='testOne(${JSON.stringify(n.name)})'>
+    <span>${esc(n.name)}</span><span class="delay ${delayCls(n.delay)}">${delayTxt(n.delay)}</span></div>`).join('')}</div>
+    <h3>订阅里的分组</h3><div class="nodes">${proxies.groups.map(g => `<div class="node" style="cursor:default"><span>${esc(g.name)}</span><span class="hint">${esc(g.now || g.type)}</span></div>`).join('')}</div>`;
+}
+async function testOne(name) {
+  const n = proxies.nodes.find(n => n.name === name);
+  const j = await api('/api/delay?name=' + encodeURIComponent(name));
+  if (n) n.delay = j.delay; renderNodes(); renderRules();
+}
+async function testAll() {
+  const b = $('testAllBtn'); b.disabled = true;
+  const queue = proxies.nodes.map(n => n.name);
+  await Promise.all(Array.from({length:6}, async () => { while (queue.length) await testOne(queue.shift()); }));
+  b.disabled = false;
+}
+
+/* ---------- 启动 ---------- */
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main section').forEach(s => s.hidden = s.id !== 'tab-' + b.dataset.tab);
+  clearInterval(connTimer);
+  if (b.dataset.tab === 'conns') { loadConns(); connTimer = setInterval(loadConns, 3000); }
+  if (b.dataset.tab === 'nodes') loadProxies();
+});
+window.addEventListener('beforeunload', e => { if (JSON.stringify(state) !== saved) e.preventDefault(); });
+(async () => {
+  const j = await api('/api/state');
+  state = j.state; state.settings ??= {lan_direct:true}; report = j.report;
+  saved = JSON.stringify(state);
+  renderRules(); loadStatus(); loadProxies();
+})();
+</script>
+</body>
+</html>

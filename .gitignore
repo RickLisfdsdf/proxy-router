@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# 个人规则数据，不上传
+rules.json
+_test_config.yaml
