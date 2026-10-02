@@ -41,6 +41,7 @@ Clash already supports per-process routing (`PROCESS-NAME`), but to actually use
 | 🌐 **Per-service routing** | Domain, domain keyword, geosite category, IP range, port |
 | 🔒 **Lock to a node** | Only the chosen node is used; if it's down the connection fails and **never leaks to another node** (ideal for IP-sensitive AI, payment and account services) |
 | 🔁 **Preferred + backups** | Automatically fails over to the backup nodes you pick |
+| 🧩 **Mix multiple subscriptions** | Send a site or app through a *different* subscription without switching Clash Verge's active one: auto-pick that subscription's fastest node (optionally filtered by name, e.g. only HK), or lock to one of its nodes |
 | 🇨🇳 **Mainland China sites direct** | While an app goes through a proxy, Chinese websites still connect directly |
 | 👀 **Live verification** | See the chain each app is **actually** using and which rule it hit; assign a node to any app currently online in one click |
 | ⚡ **Instant apply** | Validated with `mihomo -t`, then hot-reloaded — no Clash Verge restart |

@@ -49,6 +49,8 @@ button:disabled{opacity:.5;cursor:default}
 .tag.fb{background:var(--ok-soft);color:var(--ok)}
 .tag.direct{background:var(--chip);color:var(--muted)}
 .tag.reject{background:var(--bad-soft);color:var(--bad)}
+.tag.sub{background:var(--warn-soft);color:var(--warn)}
+.subrow{display:grid;grid-template-columns:160px 1fr;gap:6px;margin-top:6px}
 .actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
 .switch{position:relative;width:36px;height:20px;flex:none}
 .switch input{opacity:0;width:0;height:0}
@@ -102,6 +104,7 @@ h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
   .rule{grid-template-columns:1fr}.idx{display:none}.actions{justify-content:flex-start}
   .mrow{grid-template-columns:1fr 32px}.mrow select{grid-column:1/-1}
   .backups{columns:1}
+  .subrow{grid-template-columns:1fr}
 }
 </style>
 </head>
@@ -184,6 +187,26 @@ h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
         <div class="hint" style="margin-bottom:4px">备用节点（按订阅顺序依次尝试）</div>
         <div class="backups" id="edBackups"></div>
       </div>
+    </div>
+    <div class="field" id="edSubBox">
+      <select id="edSub" onchange="subChanged()"></select>
+      <div class="subrow" id="edSubNew">
+        <input type="text" id="edSubName" placeholder="订阅名称，如 kingfast">
+        <input type="text" id="edSubUrl" placeholder="订阅链接 https://…（Clash 格式）">
+      </div>
+      <div class="modebox" id="edPickBox" style="margin-top:10px">
+        <label><input type="radio" name="pick" value="fastest"><b>自动选最快</b>：每 5 分钟测一次速，用这个订阅里延迟最低的节点</label>
+        <label><input type="radio" name="pick" value="node"><b>锁定</b>：只走这个订阅里的某一个节点</label>
+      </div>
+      <div id="edFilterBox">
+        <input type="text" id="edFilter" placeholder="只在名字含这些字的节点里选（可选，多个用 | 隔开，如 香港|HK）">
+        <div class="hint" style="margin-top:4px">不填就在全部节点里选。「剩余流量」「到期时间」这类假节点会自动排除。</div>
+      </div>
+      <div id="edSubNodeBox">
+        <select id="edSubNode"></select>
+        <div class="hint" id="edSubHint" style="margin-top:4px"></div>
+      </div>
+      <div class="hint" style="margin-top:6px">这个订阅不用是 Clash Verge 当前选中的订阅，主订阅照常用；以后换主订阅，这条规则也不受影响。</div>
     </div>
     <div class="field" id="edCnBox">
       <label class="check"><input type="checkbox" id="edCn">
@@ -280,9 +303,19 @@ function renderRules() {
     if (t.kind === 'direct') { tag = '<span class="tag direct">直连</span>'; dest = '不走代理'; }
     else if (t.kind === 'reject') { tag = '<span class="tag reject">禁止联网</span>'; dest = ''; }
     else if (t.kind === 'group') { tag = '<span class="tag direct">订阅分组</span>'; dest = esc(t.name); }
+    else if (t.kind === 'sub') {
+      tag = '<span class="tag sub">其他订阅</span>';
+      if (t.pick === 'node') dest = esc(t.sub.name) + ' · ' + esc(t.name);
+      else {
+        const now = (proxies.managed || {})['🎯 ' + r.name];
+        dest = esc(t.sub.name) + ' · 自动选最快' + (t.filter ? `（${esc(t.filter)}）` : '') +
+          (now ? ` <span class="hint">当前：${esc(now)}</span>` : '');
+      }
+    }
     else if (r.mode === 'fallback') { tag = '<span class="tag fb">优先</span>'; dest = esc(t.name) + (r.backups?.length ? ` <span class="hint">＋${r.backups.length} 个备用</span>` : ''); }
     else { tag = '<span class="tag lock">锁定</span>'; dest = esc(t.name); }
-    const d = t.kind === 'node' ? nodeDelay(t.name) : undefined;
+    const subNow = t.kind === 'sub' ? (t.pick === 'node' ? t.name : (proxies.managed || {})['🎯 ' + r.name]) : null;
+    const d = t.kind === 'node' ? nodeDelay(t.name) : subNow ? (proxies.sub_delay || {})[subNow] : undefined;
     let st = '';
     if (r.enabled === false) st = '<span class="pill">已停用</span>';
     else if (dirty && !rep) st = '<span class="pill warn">未生效</span>';
@@ -322,7 +355,8 @@ async function apply() {
 }
 
 /* ---------- 编辑器 ---------- */
-const KINDS = [['node','指定节点'],['group','订阅里的分组'],['direct','直连'],['reject','禁止联网']];
+const KINDS = [['node','指定节点'],['group','订阅里的分组'],['sub','其他订阅'],['direct','直连'],['reject','禁止联网']];
+let subs = [], subNodesReq = 0;
 function openEditor(i, preset) {
   editing = i;
   const r = i != null ? JSON.parse(JSON.stringify(state.rules[i]))
@@ -364,6 +398,7 @@ function fillTargets(r) {
   $('edKind').innerHTML = KINDS.map(([v, l]) => `<label class="${r.target.kind === v ? 'on' : ''}"><input type="radio" name="kind" value="${v}" ${r.target.kind === v ? 'checked' : ''}>${l}</label>`).join('');
   $('edKind').onchange = () => { fillTargetSelect(null); updateEditorVis(); };
   fillTargetSelect(r.target.name);
+  fillSubs(r.target);
   document.querySelectorAll('input[name=mode]').forEach(x => x.checked = x.value === (r.mode || 'strict'));
   $('edBackups').innerHTML = proxies.nodes.map(n => `<label><input type="checkbox" value="${esc(n.name)}" ${(r.backups || []).includes(n.name) ? 'checked' : ''}> ${esc(n.name)} <span class="delay ${delayCls(n.delay)}">${delayTxt(n.delay)}</span></label>`).join('');
   $('edModeBox').onchange = updateEditorVis;
@@ -381,6 +416,47 @@ function fillTargetSelect(cur) {
       proxies.groups.map(g => `<option value="${esc(g.name)}" ${g.name === cur ? 'selected' : ''}>${esc(g.name)}（当前：${esc(g.now || '自动')}）</option>`).join('');
   }
 }
+/* 其他订阅：Clash Verge 里已有的订阅 + 规则里用过的 + 手动粘贴 */
+function allSubs() {
+  const list = subs.map(x => ({name:x.name, url:x.url, current:x.current}));
+  state.rules.forEach(r => { if (r.target.kind === 'sub' && !list.some(x => x.url === r.target.sub.url)) list.push({...r.target.sub}); });
+  return list;
+}
+function fillSubs(t) {
+  const list = allSubs(), cur = t.kind === 'sub' ? t.sub : null;
+  $('edSub').innerHTML = `<option value="">— 选择订阅 —</option>` +
+    list.map(x => `<option value="${esc(x.url)}" ${cur && cur.url === x.url ? 'selected' : ''}>${esc(x.name)}${x.current ? '（Clash Verge 当前订阅）' : ''}</option>`).join('') +
+    `<option value="new">＋ 粘贴新的订阅链接…</option>`;
+  $('edSubName').value = ''; $('edSubUrl').value = '';
+  document.querySelectorAll('input[name=pick]').forEach(x => x.checked = x.value === (t.pick || 'fastest'));
+  $('edPickBox').onchange = () => { updateEditorVis(); loadSubNodes(); };
+  $('edFilter').value = t.filter || '';
+  $('edSubNode').innerHTML = t.kind === 'sub' && t.pick === 'node' ? `<option value="${esc(t.name)}" selected>${esc(t.name)}</option>` : '';
+  $('edSubNode').dataset.cur = t.kind === 'sub' && t.pick === 'node' ? t.name : '';
+  $('edSubHint').textContent = '';
+  if (cur) loadSubNodes();
+}
+function readSub() {
+  const v = $('edSub').value;
+  if (v === 'new') return {name:$('edSubName').value.trim(), url:$('edSubUrl').value.trim()};
+  const x = allSubs().find(x => x.url === v);
+  return x ? {name:x.name, url:x.url} : null;
+}
+function subChanged() { $('edSubNode').dataset.cur = ''; updateEditorVis(); loadSubNodes(); }
+async function loadSubNodes() {
+  const sub = readSub();
+  if (!sub || !sub.url.startsWith('http') || document.querySelector('input[name=pick]:checked')?.value !== 'node') return;
+  const req = ++subNodesReq, cur = $('edSubNode').dataset.cur;
+  $('edSubHint').textContent = '正在读取订阅里的节点…';
+  try {
+    const j = await api('/api/subnodes', {method:'POST', body:sub});
+    if (req !== subNodesReq) return;
+    $('edSubNode').innerHTML = `<option value="">— 选择节点 —</option>` +
+      j.nodes.map(n => `<option value="${esc(n.name)}" ${n.name === cur ? 'selected' : ''}>${esc(n.name)}${n.delay != null ? '　' + delayTxt(n.delay) : ''}</option>`).join('');
+    $('edSubHint').textContent = `共 ${j.nodes.length} 个节点` + (j.loaded ? '' : '（还没接入，保存后才能测速）');
+  } catch (e) { if (req === subNodesReq) $('edSubHint').textContent = e.message; }
+}
+$('edSubUrl').addEventListener('change', loadSubNodes);
 function updateEditorVis() {
   const kind = document.querySelector('input[name=kind]:checked')?.value;
   document.querySelectorAll('#edKind label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
@@ -389,6 +465,12 @@ function updateEditorVis() {
   $('edModeBox').style.display = kind === 'node' ? '' : 'none';
   const mode = document.querySelector('input[name=mode]:checked')?.value;
   $('edBackupBox').style.display = kind === 'node' && mode === 'fallback' ? '' : 'none';
+  const pick = document.querySelector('input[name=pick]:checked')?.value;
+  document.querySelectorAll('#edPickBox label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
+  $('edSubBox').style.display = kind === 'sub' ? '' : 'none';
+  $('edSubNew').style.display = $('edSub').value === 'new' ? '' : 'none';
+  $('edFilterBox').style.display = pick === 'fastest' ? '' : 'none';
+  $('edSubNodeBox').style.display = pick === 'node' ? '' : 'none';
   const hasProc = [...$('edMatchers').querySelectorAll('select')].some(s => s.value.startsWith('PROCESS'));
   $('edCnBox').style.display = hasProc && kind !== 'direct' ? '' : 'none';
 }
@@ -398,6 +480,20 @@ function saveEditor() {
   const name = $('edName').value.trim();
   const matchers = readMatchers();
   const target = {kind, name: kind === 'node' || kind === 'group' ? $('edTarget').value : ''};
+  if (kind === 'sub') {
+    const sub = readSub();
+    if (!sub || !sub.name || !sub.url) return toast('请选择订阅，或填好新订阅的名称和链接', false);
+    if (!/^https?:\/\//.test(sub.url)) return toast('订阅链接要以 http:// 或 https:// 开头', false);
+    if (/[,()]/.test(sub.name)) return toast('订阅名称不能包含逗号或括号', false);
+    const clash = allSubs().find(x => x.name === sub.name && x.url !== sub.url);
+    if (clash) return toast(`已经有一个叫「${sub.name}」的订阅了，换个名字`, false);
+    target.sub = sub;
+    target.pick = document.querySelector('input[name=pick]:checked').value;
+    if (target.pick === 'node') {
+      target.name = $('edSubNode').value;
+      if (!target.name) return toast('请选择订阅里的节点', false);
+    } else target.filter = $('edFilter').value.trim();
+  }
   if (!name) return toast('请填写名称', false);
   if (/[,()]/.test(name)) return toast('名称不能包含逗号或括号', false);
   if (state.rules.some((r, i) => r.name === name && i !== editing)) return toast('名称和已有规则重复了', false);
@@ -469,7 +565,8 @@ window.addEventListener('beforeunload', e => { if (JSON.stringify(state) !== sav
   const j = await api('/api/state');
   state = j.state; state.settings ??= {lan_direct:true}; report = j.report;
   saved = JSON.stringify(state);
-  renderRules(); loadStatus(); await loadProxies();
+  renderRules(); loadStatus();
+  await Promise.all([loadProxies(), api('/api/subs').then(j => subs = j.subs).catch(() => {})]);
   document.body.classList.add('ready');
   // 支持 ?tab=conns / ?tab=nodes / ?edit=序号，方便直接打开某个页面
   const q = new URLSearchParams(location.search);

@@ -30,6 +30,9 @@
         target: {kind: 'node', name: '香港 01'}, mode: 'fallback', backups: ['香港 02'], cn_direct: true},
       {id: 'r5', name: 'Telegram', enabled: true, matchers: [P('Telegram.exe'), {type: 'GEOSITE', value: 'telegram'}],
         target: {kind: 'group', name: 'Telegram'}, mode: 'strict', backups: [], cn_direct: false},
+      {id: 'r8', name: 'YouTube', enabled: true, matchers: [{type: 'GEOSITE', value: 'youtube'}],
+        target: {kind: 'sub', name: '', sub: {name: '备用机场', url: 'https://example.com/sub2'}, pick: 'fastest', filter: '香港'},
+        mode: 'strict', backups: [], cn_direct: false},
       {id: 'r6', name: '微信', enabled: true, matchers: [P('WeChat.exe')],
         target: {kind: 'direct', name: ''}, mode: 'strict', backups: [], cn_direct: false},
       {id: 'r7', name: '游戏反作弊', enabled: false, matchers: [P('ACE-Tray.exe')],
@@ -65,6 +68,10 @@
       return {delay: Math.random() < 0.1 ? 0 : Math.round(30 + Math.random() * 250)};
     }
     if (path === '/api/mode') return {ok: true};
+    if (path === '/api/subs') return {subs: [{name: '示例订阅', url: 'https://example.com/sub1', current: true},
+      {name: '备用机场', url: 'https://example.com/sub2', current: false}]};
+    if (path === '/api/subnodes') return {ok: true, loaded: false,
+      nodes: ['香港 A', '香港 B', '日本 A', '新加坡 A', '美国 A'].map(name => ({name, delay: null}))};
     if (path === '/api/apply') {
       await wait(500);
       state = JSON.parse(opt.body);

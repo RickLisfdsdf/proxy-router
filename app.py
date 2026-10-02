@@ -4,16 +4,21 @@
   1. 规则存在 rules.json
   2. 保存时生成 Clash Verge 的全局扩展脚本 profiles/Script.js，以后 Verge 每次生成配置都会带上
   3. 同时把规则插进当前运行配置，先用 mihomo -t 校验，再通过命名管道热加载，立即生效
-所有自动生成的代理组都以「🎯 」开头，便于识别和替换。
+所有自动生成的代理组、节点提供者都以「🎯 」开头，便于识别和替换。
+规则目标除了当前订阅里的节点，还可以是「其他订阅」：把那个订阅的链接作为节点提供者接进来，
+选里面延迟最低的节点（url-test），或锁定其中某个节点。主订阅照常用，换主订阅也不影响这类规则。
 """
 import copy
 import glob
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
 import urllib.parse
+import urllib.request
 
 import yaml
 from flask import Flask, jsonify, request, send_from_directory
@@ -23,6 +28,7 @@ STATE_FILE = os.path.join(BASE, "rules.json")
 VERGE_DIR = os.path.join(os.environ["APPDATA"], "io.github.clash-verge-rev.clash-verge-rev")
 RUNTIME_YAML = os.path.join(VERGE_DIR, "clash-verge.yaml")
 SCRIPT_JS = os.path.join(VERGE_DIR, "profiles", "Script.js")
+PROFILES_YAML = os.path.join(VERGE_DIR, "profiles.yaml")
 PREFIX = "🎯 "
 LAN_GROUP = PREFIX + "局域网直连"
 CN_GROUP = PREFIX + "国内直连"
@@ -32,6 +38,9 @@ TEST_URL = "https://www.gstatic.com/generate_204"
 BUILTIN = {"DIRECT", "REJECT"}
 GROUP_TYPES = {"Selector", "URLTest", "Fallback", "LoadBalance", "Relay"}
 SKIP_TYPES = {"Direct", "Reject", "RejectDrop", "Compatible", "Pass", "Dns"}
+SUB_UA = "clash.meta"
+# 机场常在节点列表里塞「剩余流量」「到期时间」之类的假节点，自动选最快时排除掉
+INFO_NODES = "剩余|到期|过期|官网|重置|套餐|流量|Expire|Traffic|Website"
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -172,6 +181,32 @@ def validate_state(state):
         t = r.get("target") or {}
         if t.get("kind") in ("node", "group") and not t.get("name"):
             raise ValueError(f"规则「{name}」还没选节点")
+        if t.get("kind") == "sub":
+            sub = t.get("sub") or {}
+            if not (sub.get("name") or "").strip() or not (sub.get("url") or "").startswith("http"):
+                raise ValueError(f"规则「{name}」的订阅名称或链接不对")
+            if any(c in sub["name"] for c in ",()"):
+                raise ValueError(f"订阅名「{sub['name']}」不能包含逗号或括号")
+            if t.get("pick") == "node" and not t.get("name"):
+                raise ValueError(f"规则「{name}」还没选订阅里的节点")
+    urls = {}
+    for r in state.get("rules", []):
+        t = r.get("target") or {}
+        if t.get("kind") == "sub":
+            sname = t["sub"]["name"].strip()
+            if urls.setdefault(sname, t["sub"]["url"]) != t["sub"]["url"]:
+                raise ValueError(f"有两个不同的订阅链接都叫「{sname}」，请改个名字")
+
+
+def provider_name(sub):
+    return PREFIX + sub["name"].strip()
+
+
+def provider_conf(sub):
+    h = hashlib.sha1(sub["url"].encode("utf-8")).hexdigest()[:12]
+    return {"type": "http", "url": sub["url"], "path": f"./proxy_providers/router-{h}.yaml",
+            "interval": 86400, "header": {"User-Agent": [SUB_UA]},
+            "health-check": {"enable": False}}
 
 
 def build_plan(state):
@@ -189,7 +224,20 @@ def build_plan(state):
     for r in user:
         t = r["target"]
         gname = PREFIX + r["name"].strip()
-        if t["kind"] == "direct":
+        providers = {}
+        if t["kind"] == "sub":
+            pname = provider_name(t["sub"])
+            providers[pname] = provider_conf(t["sub"])
+            if t.get("pick") == "node":
+                group = {"name": gname, "type": "select", "use": [pname],
+                         "filter": "^" + re.escape(t["name"]) + "$"}
+            else:
+                group = {"name": gname, "type": "url-test", "use": [pname], "url": TEST_URL,
+                         "interval": 300, "tolerance": 50, "lazy": False,
+                         "exclude-filter": INFO_NODES}
+                if (t.get("filter") or "").strip():
+                    group["filter"] = t["filter"].strip()
+        elif t["kind"] == "direct":
             members = ["DIRECT"]
         elif t["kind"] == "reject":
             members = ["REJECT"]
@@ -197,9 +245,10 @@ def build_plan(state):
             members = [t["name"]] + [b for b in r.get("backups", []) if b != t["name"]]
         else:
             members = [t["name"]]
-        group = {"name": gname, "type": "select", "proxies": members}
-        if len(members) > 1:
-            group.update(type="fallback", url=TEST_URL, interval=180, lazy=False)
+        if t["kind"] != "sub":
+            group = {"name": gname, "type": "select", "proxies": members}
+            if len(members) > 1:
+                group.update(type="fallback", url=TEST_URL, interval=180, lazy=False)
         rules = []
         for m in r["matchers"]:
             base = f"{m['type']},{m['value'].strip()}"
@@ -207,7 +256,7 @@ def build_plan(state):
                 rules.append(f"AND,(({base}),(GEOSITE,cn)),{CN_GROUP}")
                 rules.append(f"AND,(({base}),(GEOIP,CN)),{CN_GROUP}")
             rules.append(f"{base},{gname}")
-        entries.append({"group": group, "rules": rules, "rule_id": r.get("id")})
+        entries.append({"group": group, "rules": rules, "rule_id": r.get("id"), "providers": providers})
     return entries
 
 
@@ -215,6 +264,11 @@ def strip_managed(config):
     config["proxy-groups"] = [g for g in config.get("proxy-groups") or []
                               if not str(g.get("name", "")).startswith(PREFIX)]
     config["rules"] = [r for r in config.get("rules") or [] if "," + PREFIX not in r]
+    provs = {k: v for k, v in (config.get("proxy-providers") or {}).items() if not k.startswith(PREFIX)}
+    if provs:
+        config["proxy-providers"] = provs
+    else:
+        config.pop("proxy-providers", None)
     config.pop("find-process-mode", None)
     return config
 
@@ -225,20 +279,27 @@ def apply_plan(config, entries):
     names.update(p["name"] for p in config.get("proxies") or [])
     names.update(g["name"] for g in config.get("proxy-groups") or [])
     has_providers = bool(config.get("proxy-providers"))
-    groups, rules, report = [], [], {}
+    groups, rules, report, providers = [], [], {}, {}
     for e in entries:
-        members = [n for n in e["group"]["proxies"] if has_providers or n in names]
-        missing = [n for n in e["group"]["proxies"] if n not in members]
-        if e["rule_id"]:
-            report[e["rule_id"]] = {"active": bool(members), "missing": missing}
-        if not members:
-            continue
         g = copy.deepcopy(e["group"])
-        g["proxies"] = members
-        if len(members) < 2 and g["type"] == "fallback":
-            g = {"name": g["name"], "type": "select", "proxies": members}
+        if "use" in g:  # 其他订阅：节点由提供者下载，这里没法预先检查
+            providers.update(e.get("providers") or {})
+            if e["rule_id"]:
+                report[e["rule_id"]] = {"active": True, "missing": []}
+        else:
+            members = [n for n in g["proxies"] if has_providers or n in names]
+            missing = [n for n in g["proxies"] if n not in members]
+            if e["rule_id"]:
+                report[e["rule_id"]] = {"active": bool(members), "missing": missing}
+            if not members:
+                continue
+            g["proxies"] = members
+            if len(members) < 2 and g["type"] == "fallback":
+                g = {"name": g["name"], "type": "select", "proxies": members}
         groups.append(g)
         rules.extend(e["rules"])
+    if providers:
+        config["proxy-providers"] = {**(config.get("proxy-providers") or {}), **providers}
     if groups:
         config["find-process-mode"] = "always"
         config["proxy-groups"] = (config.get("proxy-groups") or []) + groups
@@ -258,19 +319,27 @@ function main(config, profileName) {
   var hasProviders = providers && Object.keys(providers).length > 0;
   (config.proxies || []).forEach(function (p) { names[p.name] = 1; });
   (config["proxy-groups"] || []).forEach(function (g) { names[g.name] = 1; });
-  var groups = [], rules = [];
+  var groups = [], rules = [], subs = {};
   PLAN.forEach(function (e) {
-    var members = e.group.proxies.filter(function (n) { return hasProviders || names[n]; });
-    if (members.length === 0) return;
     var g = JSON.parse(JSON.stringify(e.group));
-    g.proxies = members;
-    if (members.length < 2 && g.type === "fallback") {
-      g = { name: g.name, type: "select", proxies: members };
+    if (g.use) {
+      Object.keys(e.providers || {}).forEach(function (k) { subs[k] = e.providers[k]; });
+    } else {
+      var members = g.proxies.filter(function (n) { return hasProviders || names[n]; });
+      if (members.length === 0) return;
+      g.proxies = members;
+      if (members.length < 2 && g.type === "fallback") {
+        g = { name: g.name, type: "select", proxies: members };
+      }
     }
     groups.push(g);
     rules = rules.concat(e.rules);
   });
   if (groups.length === 0) return config;
+  if (Object.keys(subs).length > 0) {
+    config["proxy-providers"] = config["proxy-providers"] || {};
+    Object.keys(subs).forEach(function (k) { config["proxy-providers"][k] = subs[k]; });
+  }
   config["find-process-mode"] = "always";
   config["proxy-groups"] = (config["proxy-groups"] || []).concat(groups);
   config.rules = rules.concat(config.rules || []);
@@ -283,7 +352,8 @@ def write_script(entries):
     backup = SCRIPT_JS + ".before-proxy-router"
     if os.path.exists(SCRIPT_JS) and not os.path.exists(backup):
         shutil.copy2(SCRIPT_JS, backup)
-    plan = [{"group": e["group"], "rules": e["rules"]} for e in entries]
+    plan = [{"group": e["group"], "rules": e["rules"], "providers": e.get("providers") or {}}
+            for e in entries]
     content = SCRIPT_TEMPLATE.replace("__PLAN__", json.dumps(plan, ensure_ascii=False, indent=2))
     with open(SCRIPT_JS, "w", encoding="utf-8") as f:
         f.write(content)
@@ -386,10 +456,12 @@ def api_mode():
 @app.get("/api/proxies")
 def api_proxies():
     data = mihomo("GET", "/proxies")["proxies"]
-    nodes, groups = [], []
+    nodes, groups, managed = [], [], {}
     for name, p in data.items():
         hist = p.get("history") or []
         delay = hist[-1]["delay"] if hist else None
+        if name.startswith(PREFIX) and p["type"] in GROUP_TYPES:
+            managed[name] = p.get("now")
         if name == "GLOBAL" or name.startswith(PREFIX):
             continue
         if p["type"] in GROUP_TYPES:
@@ -400,7 +472,17 @@ def api_proxies():
     order = {n: i for i, n in enumerate(data.get("GLOBAL", {}).get("all", []))}
     nodes.sort(key=lambda n: order.get(n["name"], 1e9))
     groups.sort(key=lambda g: order.get(g["name"], 1e9))
-    return jsonify(nodes=nodes, groups=groups)
+    # 其他订阅（🎯 提供者）里各节点的最近延迟，用来在规则卡片上显示「当前用的节点 xx ms」
+    sub_delay = {}
+    try:
+        for pname, pv in mihomo("GET", "/providers/proxies")["providers"].items():
+            if pname.startswith(PREFIX):
+                for n in pv.get("proxies") or []:
+                    hist = n.get("history") or []
+                    sub_delay[n["name"]] = hist[-1]["delay"] if hist else None
+    except Exception:
+        pass
+    return jsonify(nodes=nodes, groups=groups, managed=managed, sub_delay=sub_delay)
 
 
 @app.get("/api/delay")
@@ -408,6 +490,74 @@ def api_delay():
     name = request.args["name"]
     try:
         r = mihomo("GET", f"/proxies/{q(name)}/delay?timeout=5000&url={q(TEST_URL)}")
+        return jsonify(delay=r.get("delay"))
+    except Exception:
+        return jsonify(delay=0)
+
+
+def verge_subs():
+    """Clash Verge 里已添加的远程订阅。"""
+    try:
+        with open(PROFILES_YAML, encoding="utf-8") as f:
+            prof = yaml.safe_load(f) or {}
+    except OSError:
+        return []
+    cur = prof.get("current")
+    return [{"name": i.get("name") or i.get("uid"), "url": i["url"], "file": i.get("file"),
+             "current": i.get("uid") == cur}
+            for i in prof.get("items") or [] if i.get("type") == "remote" and i.get("url")]
+
+
+def _names_from_yaml(text):
+    data = yaml.safe_load(text) or {}
+    return [p["name"] for p in data.get("proxies") or [] if isinstance(p, dict) and p.get("name")]
+
+
+@app.get("/api/subs")
+def api_subs():
+    return jsonify(subs=[{k: v for k, v in s.items() if k != "file"} for s in verge_subs()])
+
+
+@app.post("/api/subnodes")
+def api_subnodes():
+    """某个订阅里的节点：已接入的从 mihomo 读（带延迟），否则读 Verge 下载好的文件，再不行就现下载。"""
+    sub = request.get_json()
+    pname = provider_name(sub)
+    try:
+        p = mihomo("GET", f"/providers/proxies/{q(pname)}")
+        if p.get("vehicleType") == "HTTP" and p.get("proxies"):
+            nodes = []
+            for n in p["proxies"]:
+                hist = n.get("history") or []
+                nodes.append({"name": n["name"], "delay": hist[-1]["delay"] if hist else None})
+            return jsonify(ok=True, nodes=nodes, loaded=True)
+    except Exception:
+        pass
+    try:
+        names = []
+        for s in verge_subs():
+            if s["url"] == sub["url"] and s.get("file"):
+                path = os.path.join(VERGE_DIR, "profiles", s["file"])
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        names = _names_from_yaml(f.read())
+        if not names:
+            req = urllib.request.Request(sub["url"], headers={"User-Agent": SUB_UA})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                names = _names_from_yaml(r.read().decode("utf-8", "replace"))
+        if not names:
+            raise RuntimeError("订阅里没读到节点（链接不是 Clash 格式？）")
+        return jsonify(ok=True, nodes=[{"name": n, "delay": None} for n in names], loaded=False)
+    except Exception as e:
+        return jsonify(ok=False, error=f"读取订阅失败：{e}"), 400
+
+
+@app.post("/api/subdelay")
+def api_subdelay():
+    b = request.get_json()
+    try:
+        r = mihomo("GET", f"/providers/proxies/{q(provider_name(b['sub']))}/{q(b['name'])}"
+                          f"/healthcheck?timeout=5000&url={q(TEST_URL)}")
         return jsonify(delay=r.get("delay"))
     except Exception:
         return jsonify(delay=0)
