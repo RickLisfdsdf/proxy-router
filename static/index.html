@@ -201,6 +201,8 @@ h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
       <div id="edFilterBox">
         <input type="text" id="edFilter" placeholder="只在名字含这些字的节点里选（可选，多个用 | 隔开，如 香港|HK）">
         <div class="hint" style="margin-top:4px">不填就在全部节点里选。「剩余流量」「到期时间」这类假节点会自动排除。</div>
+        <input type="text" id="edTestUrl" style="margin-top:6px" placeholder="测速地址（可选，如 https://t.me/）">
+        <div class="hint" style="margin-top:4px">不填用通用测速地址。有的节点能测通却打不开特定网站，填上那个网站，打不开它的节点就会被自动淘汰。</div>
       </div>
       <div id="edSubNodeBox">
         <select id="edSubNode"></select>
@@ -431,6 +433,7 @@ function fillSubs(t) {
   document.querySelectorAll('input[name=pick]').forEach(x => x.checked = x.value === (t.pick || 'fastest'));
   $('edPickBox').onchange = () => { updateEditorVis(); loadSubNodes(); };
   $('edFilter').value = t.filter || '';
+  $('edTestUrl').value = t.test_url || '';
   $('edSubNode').innerHTML = t.kind === 'sub' && t.pick === 'node' ? `<option value="${esc(t.name)}" selected>${esc(t.name)}</option>` : '';
   $('edSubNode').dataset.cur = t.kind === 'sub' && t.pick === 'node' ? t.name : '';
   $('edSubHint').textContent = '';
@@ -492,7 +495,12 @@ function saveEditor() {
     if (target.pick === 'node') {
       target.name = $('edSubNode').value;
       if (!target.name) return toast('请选择订阅里的节点', false);
-    } else target.filter = $('edFilter').value.trim();
+    } else {
+      target.filter = $('edFilter').value.trim();
+      const tu = $('edTestUrl').value.trim();
+      if (tu && !/^https?:\/\//.test(tu)) return toast('测速地址要以 http:// 或 https:// 开头', false);
+      if (tu) target.test_url = tu;
+    }
   }
   if (!name) return toast('请填写名称', false);
   if (/[,()]/.test(name)) return toast('名称不能包含逗号或括号', false);

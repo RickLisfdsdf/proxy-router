@@ -189,6 +189,8 @@ def validate_state(state):
                 raise ValueError(f"订阅名「{sub['name']}」不能包含逗号或括号")
             if t.get("pick") == "node" and not t.get("name"):
                 raise ValueError(f"规则「{name}」还没选订阅里的节点")
+            if (t.get("test_url") or "").strip() and not t["test_url"].strip().startswith("http"):
+                raise ValueError(f"规则「{name}」的测速地址要以 http:// 或 https:// 开头")
     urls = {}
     for r in state.get("rules", []):
         t = r.get("target") or {}
@@ -232,7 +234,8 @@ def build_plan(state):
                 group = {"name": gname, "type": "select", "use": [pname],
                          "filter": "^" + re.escape(t["name"]) + "$"}
             else:
-                group = {"name": gname, "type": "url-test", "use": [pname], "url": TEST_URL,
+                group = {"name": gname, "type": "url-test", "use": [pname],
+                         "url": (t.get("test_url") or "").strip() or TEST_URL,
                          "interval": 300, "tolerance": 50, "lazy": False,
                          "exclude-filter": INFO_NODES}
                 if (t.get("filter") or "").strip():
