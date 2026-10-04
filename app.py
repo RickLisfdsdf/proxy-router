@@ -30,6 +30,7 @@ RUNTIME_YAML = os.path.join(VERGE_DIR, "clash-verge.yaml")
 SCRIPT_JS = os.path.join(VERGE_DIR, "profiles", "Script.js")
 PROFILES_YAML = os.path.join(VERGE_DIR, "profiles.yaml")
 PREFIX = "🎯 "
+SELF_PREFIX = "🏠 "  # 自建节点（rules.json 里的 self_nodes）注入到配置时的名字前缀
 LAN_GROUP = PREFIX + "局域网直连"
 CN_GROUP = PREFIX + "国内直连"
 LAN_CIDRS = ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
@@ -191,6 +192,9 @@ def validate_state(state):
                 raise ValueError(f"规则「{name}」还没选订阅里的节点")
             if (t.get("test_url") or "").strip() and not t["test_url"].strip().startswith("http"):
                 raise ValueError(f"规则「{name}」的测速地址要以 http:// 或 https:// 开头")
+    for n in state.get("self_nodes", []):
+        if not str(n.get("name", "")).startswith(SELF_PREFIX) or not n.get("type") or not n.get("server"):
+            raise ValueError(f"自建节点「{n.get('name')}」要有 name(以「{SELF_PREFIX}」开头)、type、server")
     urls = {}
     for r in state.get("rules", []):
         t = r.get("target") or {}
@@ -214,6 +218,8 @@ def provider_conf(sub):
 def build_plan(state):
     """生成与具体订阅无关的计划：每项 = 一个代理组 + 指向它的规则。"""
     entries = []
+    if state.get("self_nodes"):
+        entries.append({"proxies": state["self_nodes"], "rules": [], "rule_id": None})
     if state.get("settings", {}).get("lan_direct", True):
         entries.append({"group": {"name": LAN_GROUP, "type": "select", "proxies": ["DIRECT"]},
                         "rules": [f"IP-CIDR{'6' if ':' in c else ''},{c},{LAN_GROUP},no-resolve"
@@ -267,6 +273,8 @@ def strip_managed(config):
     config["proxy-groups"] = [g for g in config.get("proxy-groups") or []
                               if not str(g.get("name", "")).startswith(PREFIX)]
     config["rules"] = [r for r in config.get("rules") or [] if "," + PREFIX not in r]
+    config["proxies"] = [p for p in config.get("proxies") or []
+                         if not str(p.get("name", "")).startswith(SELF_PREFIX)]
     provs = {k: v for k, v in (config.get("proxy-providers") or {}).items() if not k.startswith(PREFIX)}
     if provs:
         config["proxy-providers"] = provs
@@ -278,12 +286,17 @@ def strip_managed(config):
 
 def apply_plan(config, entries):
     """与 Script.js 里的 JS 逻辑一致：成员节点不存在就剔除，全部不存在则该规则不生效。"""
+    for e in entries:
+        if e.get("proxies"):
+            config["proxies"] = copy.deepcopy(e["proxies"]) + (config.get("proxies") or [])
     names = set(BUILTIN)
     names.update(p["name"] for p in config.get("proxies") or [])
     names.update(g["name"] for g in config.get("proxy-groups") or [])
     has_providers = bool(config.get("proxy-providers"))
     groups, rules, report, providers = [], [], {}, {}
     for e in entries:
+        if not e.get("group"):
+            continue
         g = copy.deepcopy(e["group"])
         if "use" in g:  # 其他订阅：节点由提供者下载，这里没法预先检查
             providers.update(e.get("providers") or {})
@@ -317,6 +330,9 @@ SCRIPT_TEMPLATE = r"""// =======================================================
 var PLAN = __PLAN__;
 
 function main(config, profileName) {
+  PLAN.forEach(function (e) {
+    if (e.proxies) config.proxies = JSON.parse(JSON.stringify(e.proxies)).concat(config.proxies || []);
+  });
   var names = { DIRECT: 1, REJECT: 1 };
   var providers = config["proxy-providers"];
   var hasProviders = providers && Object.keys(providers).length > 0;
@@ -324,6 +340,7 @@ function main(config, profileName) {
   (config["proxy-groups"] || []).forEach(function (g) { names[g.name] = 1; });
   var groups = [], rules = [], subs = {};
   PLAN.forEach(function (e) {
+    if (!e.group) return;
     var g = JSON.parse(JSON.stringify(e.group));
     if (g.use) {
       Object.keys(e.providers || {}).forEach(function (k) { subs[k] = e.providers[k]; });
@@ -338,7 +355,7 @@ function main(config, profileName) {
     groups.push(g);
     rules = rules.concat(e.rules);
   });
-  if (groups.length === 0) return config;
+  if (groups.length === 0) return config;  // 自建节点已在上面注入
   if (Object.keys(subs).length > 0) {
     config["proxy-providers"] = config["proxy-providers"] || {};
     Object.keys(subs).forEach(function (k) { config["proxy-providers"][k] = subs[k]; });
@@ -355,7 +372,8 @@ def write_script(entries):
     backup = SCRIPT_JS + ".before-proxy-router"
     if os.path.exists(SCRIPT_JS) and not os.path.exists(backup):
         shutil.copy2(SCRIPT_JS, backup)
-    plan = [{"group": e["group"], "rules": e["rules"], "providers": e.get("providers") or {}}
+    plan = [{"group": e.get("group"), "rules": e["rules"], "providers": e.get("providers") or {},
+             **({"proxies": e["proxies"]} if e.get("proxies") else {})}
             for e in entries]
     content = SCRIPT_TEMPLATE.replace("__PLAN__", json.dumps(plan, ensure_ascii=False, indent=2))
     with open(SCRIPT_JS, "w", encoding="utf-8") as f:
