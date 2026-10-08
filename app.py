@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -618,5 +619,47 @@ def api_connections():
     return jsonify(apps=out)
 
 
+# ---------------------------------------------------------------- 连接跟随自动选择
+
+AUTO_TYPES = {"URLTest", "Fallback"}
+FOLLOW_INTERVAL = 20  # 秒
+
+
+def stale_connections():
+    """找出走「🎯」自动组、但用的节点已不是该组当前选中节点的连接。
+    mihomo 的 url-test 换节点后老连接不会跟着换，长连接（如 Telegram）会一直卡在坏节点上。"""
+    proxies = mihomo("GET", "/proxies").get("proxies") or {}
+    now = {name: p.get("now") for name, p in proxies.items()
+           if name.startswith(PREFIX) and p.get("type") in AUTO_TYPES}
+    if not now:
+        return []
+    stale = []
+    for c in mihomo("GET", "/connections").get("connections") or []:
+        chain = c.get("chains") or []  # [最终节点, ..., 最外层组]
+        for i in range(1, len(chain)):
+            want = now.get(chain[i])
+            if want and chain[i - 1] != want:
+                stale.append(c["id"])
+                break
+    return stale
+
+
+def follow_auto_groups():
+    seen = set()  # 连续两轮都不一致才断，避免节点正在来回切时误断
+    while True:
+        time.sleep(FOLLOW_INTERVAL)
+        try:
+            stale = set(stale_connections())
+            for cid in stale & seen:
+                try:
+                    mihomo("DELETE", f"/connections/{cid}")
+                except Exception:
+                    pass
+            seen = stale - seen
+        except Exception:
+            seen = set()
+
+
 if __name__ == "__main__":
+    threading.Thread(target=follow_auto_groups, daemon=True).start()
     app.run(host="127.0.0.1", port=9123, threaded=True)
