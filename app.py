@@ -163,6 +163,9 @@ def save_state(state):
 
 
 def validate_state(state):
+    # 空请求体/格式不对时直接拒绝，避免把 rules.json 整个清空
+    if not isinstance(state, dict) or not isinstance(state.get("rules"), list):
+        raise ValueError("请求里没有 rules 列表，已拒绝（防止误清空规则）")
     seen = set()
     for r in state.get("rules", []):
         name = (r.get("name") or "").strip()
