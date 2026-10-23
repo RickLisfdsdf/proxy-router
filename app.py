@@ -243,12 +243,6 @@ def build_plan(state):
             if t.get("pick") == "node":
                 group = {"name": gname, "type": "select", "use": [pname],
                          "filter": "^" + re.escape(t["name"]) + "$"}
-            elif t.get("pick") == "fallback":
-                group = {"name": gname, "type": "fallback", "use": [pname],
-                         "url": (t.get("test_url") or "").strip() or TEST_URL,
-                         "interval": 180, "lazy": False}
-                if (t.get("filter") or "").strip():
-                    group["filter"] = t["filter"].strip()
             else:
                 group = {"name": gname, "type": "url-test", "use": [pname],
                          "url": (t.get("test_url") or "").strip() or TEST_URL,

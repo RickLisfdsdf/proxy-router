@@ -196,7 +196,6 @@ h3{font-size:14px;margin:20px 0 10px;color:var(--muted);font-weight:600}
       </div>
       <div class="modebox" id="edPickBox" style="margin-top:10px">
         <label><input type="radio" name="pick" value="fastest"><b>自动选最快</b>：每 5 分钟测一次速，用这个订阅里延迟最低的节点</label>
-        <label><input type="radio" name="pick" value="fallback"><b>故障切换</b>：出现错误时自动切到下一个节点，可按关键词筛选（如「日本|JP」）</label>
         <label><input type="radio" name="pick" value="node"><b>锁定</b>：只走这个订阅里的某一个节点</label>
       </div>
       <div id="edFilterBox">
@@ -307,19 +306,12 @@ function renderRules() {
     else if (t.kind === 'reject') { tag = '<span class="tag reject">禁止联网</span>'; dest = ''; }
     else if (t.kind === 'group') { tag = '<span class="tag direct">订阅分组</span>'; dest = esc(t.name); }
     else if (t.kind === 'sub') {
-      if (t.pick === 'fallback') {
-        tag = '<span class="tag fb">故障切换</span>';
+      tag = '<span class="tag sub">其他订阅</span>';
+      if (t.pick === 'node') dest = esc(t.sub.name) + ' · ' + esc(t.name);
+      else {
         const now = (proxies.managed || {})['🎯 ' + r.name];
-        dest = esc(t.sub.name) + (t.filter ? `（${esc(t.filter)}）` : '') +
+        dest = esc(t.sub.name) + ' · 自动选最快' + (t.filter ? `（${esc(t.filter)}）` : '') +
           (now ? ` <span class="hint">当前：${esc(now)}</span>` : '');
-      } else {
-        tag = '<span class="tag sub">其他订阅</span>';
-        if (t.pick === 'node') dest = esc(t.sub.name) + ' · ' + esc(t.name);
-        else {
-          const now = (proxies.managed || {})['🎯 ' + r.name];
-          dest = esc(t.sub.name) + ' · 自动选最快' + (t.filter ? `（${esc(t.filter)}）` : '') +
-            (now ? ` <span class="hint">当前：${esc(now)}</span>` : '');
-        }
       }
     }
     else if (r.mode === 'fallback') { tag = '<span class="tag fb">优先</span>'; dest = esc(t.name) + (r.backups?.length ? ` <span class="hint">＋${r.backups.length} 个备用</span>` : ''); }
@@ -480,7 +472,7 @@ function updateEditorVis() {
   document.querySelectorAll('#edPickBox label').forEach(l => l.classList.toggle('on', l.querySelector('input').checked));
   $('edSubBox').style.display = kind === 'sub' ? '' : 'none';
   $('edSubNew').style.display = $('edSub').value === 'new' ? '' : 'none';
-  $('edFilterBox').style.display = (pick === 'fastest' || pick === 'fallback') ? '' : 'none';
+  $('edFilterBox').style.display = pick === 'fastest' ? '' : 'none';
   $('edSubNodeBox').style.display = pick === 'node' ? '' : 'none';
   const hasProc = [...$('edMatchers').querySelectorAll('select')].some(s => s.value.startsWith('PROCESS'));
   $('edCnBox').style.display = hasProc && kind !== 'direct' ? '' : 'none';
