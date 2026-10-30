@@ -4,3 +4,4 @@ __pycache__/
 rules.json
 _test_config.yaml
 rules.json.bak*
+watchdog.log
