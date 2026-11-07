@@ -626,6 +626,8 @@ def api_connections():
 
 AUTO_TYPES = {"URLTest", "Fallback"}
 FOLLOW_INTERVAL = 20  # 秒
+# 订阅扩展脚本里自建的自动组（不带「🎯」前缀），老连接也要跟着换
+EXTRA_FOLLOW_GROUPS = {"日本"}
 
 
 def stale_connections():
@@ -633,7 +635,8 @@ def stale_connections():
     mihomo 的 url-test 换节点后老连接不会跟着换，长连接（如 Telegram）会一直卡在坏节点上。"""
     proxies = mihomo("GET", "/proxies").get("proxies") or {}
     now = {name: p.get("now") for name, p in proxies.items()
-           if name.startswith(PREFIX) and p.get("type") in AUTO_TYPES}
+           if (name.startswith(PREFIX) or name in EXTRA_FOLLOW_GROUPS)
+           and p.get("type") in AUTO_TYPES}
     if not now:
         return []
     stale = []
